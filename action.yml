@@ -1,5 +1,5 @@
 name: "AG's PR summarizer"
-description: "AI-powered Pull Request summarization and code review using OpenAI GPT"
+description: "AI Pull Request summarization"
 inputs:
   GITHUB_TOKEN:
     description: "GitHub token to interact with the repository"
@@ -19,6 +19,14 @@ inputs:
     description: "Maximum number of files to analyze per PR"
     required: false
     default: "50"
+  owner:
+    description: "Who should own the summary: 'bot' (appears as GitHub Action comment) or 'author' (appears in PR description as the PR author)"
+    required: false
+    default: "author"
+  override_summary:
+    description: "Whether to override the existing summary (true) or append to it (false)"
+    required: true
+    default: "false"
 
 runs:
   using: "node20"

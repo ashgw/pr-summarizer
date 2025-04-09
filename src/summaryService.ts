@@ -4,7 +4,7 @@ import { PRDetails } from "./types";
 
 export async function summarizeChanges(
   parsedDiff: File[],
-  prDetails: PRDetails,
+  prDetails: PRDetails
 ): Promise<string | null> {
   const filesChanged = parsedDiff.map((file) => file.to || "").join(", ");
 
@@ -22,9 +22,23 @@ export async function summarizeChanges(
     prDetails.title,
     prDetails.description,
     commitMessages,
-    diffSummary,
+    diffSummary
   );
 
   const summary = await getAISummary(prompt);
-  return summary;
+
+  if (!summary) return null;
+
+  const formattedSummary = `## PR Summary
+
+${summary
+  .split("\n")
+  .map((line) => line.trim())
+  .filter((line) => line)
+  .join("\n\n")}
+
+### Files Changed
+${parsedDiff.map((file) => `- \`${file.to || "unknown file"}\``).join("\n")}`;
+
+  return formattedSummary;
 }
