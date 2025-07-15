@@ -2,7 +2,7 @@
   "type": "module",
   "name": "@ashgw/pr-summarizer",
   "version": "1.0.0",
-  "description": "AI powered code reviews",
+  "description": "AI powered code reviews with agentic learning capabilities",
   "main": "lib/main.js",
   "author": "Ashref Gwader",
   "license": "MIT",
@@ -32,7 +32,12 @@
     "code-review",
     "ai",
     "openai",
-    "automation"
+    "automation",
+    "agentic",
+    "learning",
+    "memory",
+    "personalization",
+    "context-aware"
   ],
   "repository": {
     "type": "git",

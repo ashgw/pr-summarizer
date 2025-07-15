@@ -1,5 +1,5 @@
 name: "AG's PR summarizer"
-description: "AI Pull Request summarization"
+description: "AI Pull Request summarization with agentic learning capabilities"
 inputs:
   GITHUB_TOKEN:
     description: "GitHub token to interact with the repository"
@@ -11,6 +11,10 @@ inputs:
     description: "OpenAI API model to use"
     required: false
     default: "gpt-4o"
+  ENABLE_AGENTIC_MODE:
+    description: "Enable agentic learning mode with memory and personalization"
+    required: false
+    default: "false"
   exclude:
     description: "Glob patterns to exclude files from the analysis (comma-separated)"
     required: false

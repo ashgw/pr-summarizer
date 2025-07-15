@@ -9,11 +9,12 @@ import { AiService } from "./services/ai";
 import { Optional } from "./types";
 
 async function main() {
-  core.info("Starting code summarization process...");
+  core.info("Starting agentic code summarization process...");
 
   const GITHUB_TOKEN = core.getInput("GITHUB_TOKEN");
   const OPENAI_API_KEY = core.getInput("OPENAI_API_KEY");
-  const OPENAI_API_MODEL = core.getInput("OPENAI_API_MODEL");
+  const OPENAI_API_MODEL = core.getInput("OPENAI_API_MODEL") || "gpt-4o";
+  const ENABLE_AGENTIC_MODE = core.getInput("ENABLE_AGENTIC_MODE") === "true";
 
   try {
     const githubService = new GitHubService({
@@ -25,14 +26,14 @@ async function main() {
 
     let diff: Optional<string>;
     const eventData = JSON.parse(
-      readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
+      readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"),
     );
 
     if (eventData.action === "opened" || eventData.action === "synchronize") {
       diff = await githubService.getDiff(
         prDetails.owner,
         prDetails.repo,
-        prDetails.pull_number
+        prDetails.pull_number,
       );
     } else {
       core.info("Unsupported event: " + process.env.GITHUB_EVENT_NAME);
@@ -49,18 +50,21 @@ async function main() {
     const excludePatterns = core
       .getInput("exclude")
       .split(",")
-      .map((s) => s.trim());
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const filteredDiff = parsedDiff.filter((file) => {
       const filePath = file.to ?? "";
       return !excludePatterns.some((pattern) => minimatch(filePath, pattern));
     });
 
+    const aiService = new AiService({
+      apiKey: OPENAI_API_KEY,
+      model: OPENAI_API_MODEL,
+    });
+
     const summary = await SummaryService.summarize({
-      aiService: new AiService({
-        apiKey: OPENAI_API_KEY,
-        model: OPENAI_API_MODEL,
-      }),
+      aiService,
       parsedDiff: filteredDiff,
       prDetails,
     });
@@ -75,12 +79,34 @@ async function main() {
         prDetails.pull_number,
         summary,
         useAuthorIdentity,
-        useAuthorIdentity ? prDetails.author : undefined
+        useAuthorIdentity ? prDetails.author : undefined,
       );
+
+      // If agentic mode is enabled, log additional information
+      if (ENABLE_AGENTIC_MODE) {
+        core.info(
+          "Agentic mode enabled - enhanced learning capabilities active",
+        );
+
+        try {
+          const agentStatus = await SummaryService.getAgentStatus({
+            repo: prDetails.repo,
+            aiService,
+          });
+
+          core.info(`Agent Status:
+- Users tracked: ${agentStatus.memoryStatus.userCount}
+- Total interactions: ${agentStatus.memoryStatus.interactionCount}
+- Has codebase context: ${agentStatus.memoryStatus.hasCodebaseContext}
+- Common patterns: ${agentStatus.learningStatus.commonPatterns.join(", ")}`);
+        } catch (error) {
+          core.warning(`Failed to get agent status: ${error}`);
+        }
+      }
     }
   } catch (error) {
     core.setFailed(
-      `Action failed: ${error instanceof Error ? error.message : String(error)}`
+      `Action failed: ${error instanceof Error ? error.message : String(error)}`,
     );
     throw error;
   }
@@ -88,7 +114,7 @@ async function main() {
 
 main().catch((error) => {
   core.setFailed(
-    `Unhandled error: ${error instanceof Error ? error.message : String(error)}`
+    `Unhandled error: ${error instanceof Error ? error.message : String(error)}`,
   );
   process.exit(1);
 });

@@ -29371,7 +29371,7 @@ var init_fileFromPath = __esm(() => {
 // src/index.ts
 var core2 = __toESM(require_core(), 1);
 var import_parse_diff = __toESM(require_parse_diff(), 1);
-import { readFileSync as readFileSync2 } from "fs";
+import { readFileSync as readFileSync3 } from "fs";
 
 // node_modules/minimatch/dist/esm/index.js
 var import_brace_expansion = __toESM(require_brace_expansion(), 1);
@@ -30677,40 +30677,631 @@ class GitHubService {
   }
 }
 
+// src/services/agents/memory.ts
+import { readFileSync as readFileSync2, writeFileSync, existsSync } from "fs";
+import { join } from "path";
+
+class MemoryService {
+  memoryPath;
+  memory;
+  constructor() {
+    this.memoryPath = join(process.cwd(), ".agent-memory.json");
+    this.memory = this.loadMemory();
+  }
+  loadMemory() {
+    if (!existsSync(this.memoryPath)) {
+      return {
+        userPreferences: {},
+        historicalPatterns: {},
+        codebaseContexts: {},
+        interactionHistory: []
+      };
+    }
+    try {
+      const data = readFileSync2(this.memoryPath, "utf8");
+      return JSON.parse(data);
+    } catch (error) {
+      console.warn("Failed to load memory, starting fresh:", error);
+      return {
+        userPreferences: {},
+        historicalPatterns: {},
+        codebaseContexts: {},
+        interactionHistory: []
+      };
+    }
+  }
+  saveMemory() {
+    try {
+      writeFileSync(this.memoryPath, JSON.stringify(this.memory, null, 2));
+    } catch (error) {
+      console.warn("Failed to save memory:", error);
+    }
+  }
+  async getUserPreferences(author) {
+    const preferences = this.memory.userPreferences[author];
+    if (preferences) {
+      return preferences;
+    }
+    return {
+      summaryStyle: "technical",
+      focusAreas: ["architecture", "performance", "security"],
+      detailLevel: "medium",
+      includeSuggestions: true,
+      preferredLanguage: "en"
+    };
+  }
+  async updateUserPreferences(author, preferences) {
+    this.memory.userPreferences[author] = {
+      ...await this.getUserPreferences(author),
+      ...preferences
+    };
+    this.saveMemory();
+  }
+  async getHistoricalPatterns(repo) {
+    const patterns = this.memory.historicalPatterns[repo];
+    if (patterns) {
+      return patterns;
+    }
+    return {
+      commonChanges: [],
+      frequentIssues: [],
+      teamPreferences: [],
+      successfulPatterns: []
+    };
+  }
+  async updateHistoricalPatterns(repo, patterns) {
+    this.memory.historicalPatterns[repo] = {
+      ...await this.getHistoricalPatterns(repo),
+      ...patterns
+    };
+    this.saveMemory();
+  }
+  async recordInteraction(record) {
+    this.memory.interactionHistory.push(record);
+    if (this.memory.interactionHistory.length > 1000) {
+      this.memory.interactionHistory = this.memory.interactionHistory.slice(-1000);
+    }
+    this.saveMemory();
+  }
+  async getCodebaseContext(repo) {
+    return this.memory.codebaseContexts[repo] || null;
+  }
+  async updateCodebaseContext(repo, context) {
+    this.memory.codebaseContexts[repo] = context;
+    this.saveMemory();
+  }
+  async getInteractionHistory(repo, author) {
+    let history = this.memory.interactionHistory;
+    if (repo) {
+      history = history.filter((record) => record.repo === repo);
+    }
+    if (author) {
+      history = history.filter((record) => record.author === author);
+    }
+    return history;
+  }
+}
+
+// src/services/agents/codebase-analyzer.ts
+class CodebaseAnalyzer {
+  aiService;
+  constructor(aiService) {
+    this.aiService = aiService;
+  }
+  async analyze({
+    parsedDiff,
+    prDetails
+  }) {
+    const fileTypes = this.analyzeFileTypes(parsedDiff);
+    const complexity = this.assessComplexity(parsedDiff);
+    const patterns = this.extractPatterns(parsedDiff);
+    const architecturalAnalysis = await this.aiService.analyzeArchitecture({
+      fileTypes,
+      patterns,
+      commitMessages: prDetails.commits.map((c) => c.message)
+    });
+    return {
+      architecture: architecturalAnalysis.architecture,
+      patterns,
+      conventions: architecturalAnalysis.conventions,
+      techStack: fileTypes,
+      complexity
+    };
+  }
+  analyzeFileTypes(parsedDiff) {
+    const extensions = new Set;
+    for (const file of parsedDiff) {
+      const fileName = file.to ?? file.from ?? "";
+      const extension = fileName.split(".").pop()?.toLowerCase();
+      if (extension) {
+        extensions.add(extension);
+      }
+    }
+    return Array.from(extensions);
+  }
+  assessComplexity(parsedDiff) {
+    const totalChanges = parsedDiff.reduce((sum, file) => {
+      return sum + (file.chunks?.length ?? 0);
+    }, 0);
+    const fileCount = parsedDiff.length;
+    if (totalChanges > 50 || fileCount > 10)
+      return "high";
+    if (totalChanges > 20 || fileCount > 5)
+      return "medium";
+    return "low";
+  }
+  extractPatterns(parsedDiff) {
+    const patterns = [];
+    const hasNewFiles = parsedDiff.some((f) => f.from === "/dev/null");
+    const hasDeletedFiles = parsedDiff.some((f) => f.to === "/dev/null");
+    const hasRenamedFiles = parsedDiff.some((f) => f.from && f.to && f.from !== f.to);
+    if (hasNewFiles)
+      patterns.push("file-creation");
+    if (hasDeletedFiles)
+      patterns.push("file-deletion");
+    if (hasRenamedFiles)
+      patterns.push("file-renaming");
+    const jsFiles = parsedDiff.filter((f) => f.to?.endsWith(".js") || f.to?.endsWith(".ts"));
+    const configFiles = parsedDiff.filter((f) => f.to?.includes("config") || f.to?.includes("package"));
+    const testFiles = parsedDiff.filter((f) => f.to?.includes("test") || f.to?.includes("spec"));
+    if (jsFiles.length > 0)
+      patterns.push("javascript-modification");
+    if (configFiles.length > 0)
+      patterns.push("configuration-change");
+    if (testFiles.length > 0)
+      patterns.push("test-modification");
+    const srcFiles = parsedDiff.filter((f) => f.to?.includes("src/"));
+    const docsFiles = parsedDiff.filter((f) => f.to?.includes("doc") || f.to?.includes("README"));
+    const buildFiles = parsedDiff.filter((f) => f.to?.includes("build") || f.to?.includes("dist"));
+    if (srcFiles.length > 0)
+      patterns.push("source-code-change");
+    if (docsFiles.length > 0)
+      patterns.push("documentation-change");
+    if (buildFiles.length > 0)
+      patterns.push("build-system-change");
+    return patterns;
+  }
+}
+
+// src/services/agents/context-builder.ts
+class ContextBuilder {
+  aiService;
+  constructor(aiService) {
+    this.aiService = aiService;
+  }
+  async buildContext(agentContext) {
+    const {
+      prDetails,
+      parsedDiff,
+      codebaseContext,
+      userPreferences,
+      historicalPatterns
+    } = agentContext;
+    const technicalContext = this.buildTechnicalContext(parsedDiff, prDetails);
+    const userContext = this.buildUserContext(userPreferences, prDetails.author);
+    const historicalContext = this.buildHistoricalContext(historicalPatterns);
+    const architecturalContext = this.buildArchitecturalContext(codebaseContext);
+    const recommendations = await this.generateRecommendations(agentContext);
+    return {
+      technicalContext,
+      userContext,
+      historicalContext,
+      architecturalContext,
+      recommendations
+    };
+  }
+  buildTechnicalContext(parsedDiff, prDetails) {
+    const changedFiles = parsedDiff.filter((f) => f.to && f.to !== "/dev/null");
+    const deletedFiles = parsedDiff.filter((f) => f.to === "/dev/null");
+    const newFiles = parsedDiff.filter((f) => f.from === "/dev/null");
+    const renamedFiles = parsedDiff.filter((f) => f.from && f.to && f.from !== f.to);
+    const totalChanges = parsedDiff.reduce((sum, f) => sum + (f.chunks?.length ?? 0), 0);
+    return `Technical Analysis:
+- Files modified: ${changedFiles.length}
+- Files added: ${newFiles.length}
+- Files deleted: ${deletedFiles.length}
+- Files renamed: ${renamedFiles.length}
+- Total changes: ${totalChanges}
+- Commit count: ${prDetails.commits.length}
+- PR Title: "${prDetails.title}"
+- PR Description: "${prDetails.description || "No description provided"}"`;
+  }
+  buildUserContext(userPreferences, author) {
+    return `User Context (${author}):
+- Preferred style: ${userPreferences.summaryStyle}
+- Focus areas: ${userPreferences.focusAreas.join(", ")}
+- Detail level: ${userPreferences.detailLevel}
+- Include suggestions: ${userPreferences.includeSuggestions}
+- Language: ${userPreferences.preferredLanguage}`;
+  }
+  buildHistoricalContext(historicalPatterns) {
+    const hasPatterns = historicalPatterns.commonChanges.length > 0 || historicalPatterns.frequentIssues.length > 0 || historicalPatterns.teamPreferences.length > 0;
+    if (!hasPatterns) {
+      return `Historical Context:
+- This appears to be a new repository or user with no historical patterns yet`;
+    }
+    return `Historical Context:
+- Common changes: ${historicalPatterns.commonChanges.slice(0, 3).join(", ") || "None recorded"}
+- Frequent issues: ${historicalPatterns.frequentIssues.slice(0, 3).join(", ") || "None recorded"}
+- Team preferences: ${historicalPatterns.teamPreferences.slice(0, 3).join(", ") || "None recorded"}
+- Successful patterns: ${historicalPatterns.successfulPatterns.slice(0, 3).join(", ") || "None recorded"}`;
+  }
+  buildArchitecturalContext(codebaseContext) {
+    return `Architecture Context:
+- Architecture: ${codebaseContext.architecture}
+- Tech stack: ${codebaseContext.techStack.join(", ") || "Not identified"}
+- Complexity: ${codebaseContext.complexity}
+- Patterns: ${codebaseContext.patterns.join(", ") || "None identified"}
+- Conventions: ${codebaseContext.conventions.slice(0, 3).join(", ") || "None identified"}`;
+  }
+  async generateRecommendations(agentContext) {
+    const { parsedDiff, codebaseContext, userPreferences } = agentContext;
+    try {
+      const recommendations = await this.aiService.generateRecommendations({
+        parsedDiff,
+        codebaseContext,
+        userPreferences
+      });
+      return recommendations;
+    } catch (error) {
+      console.warn("Failed to generate AI recommendations:", error);
+      return this.generateFallbackRecommendations(agentContext);
+    }
+  }
+  generateFallbackRecommendations(agentContext) {
+    const { parsedDiff, codebaseContext } = agentContext;
+    const recommendations = [];
+    if (codebaseContext.patterns.includes("test-modification")) {
+      recommendations.push("Consider running the test suite to ensure all tests pass");
+    }
+    if (codebaseContext.patterns.includes("configuration-change")) {
+      recommendations.push("Verify configuration changes don't break existing functionality");
+    }
+    if (codebaseContext.complexity === "high") {
+      recommendations.push("Consider breaking down this large change into smaller, focused PRs");
+    }
+    if (parsedDiff.some((f) => f.to?.includes("package.json"))) {
+      recommendations.push("Update documentation if new dependencies were added");
+    }
+    return recommendations.slice(0, 3);
+  }
+}
+
+// src/services/agents/summary-generator.ts
+class SummaryGenerator {
+  aiService;
+  constructor(aiService) {
+    this.aiService = aiService;
+  }
+  async generateSummary(enhancedContext) {
+    const {
+      technicalContext,
+      userContext,
+      historicalContext,
+      architecturalContext,
+      recommendations
+    } = enhancedContext;
+    try {
+      const summary = await this.aiService.generateAgenticSummary(enhancedContext);
+      if (!summary) {
+        return this.generateFallbackSummary(enhancedContext);
+      }
+      return this.formatSummary(summary, enhancedContext);
+    } catch (error) {
+      console.warn("Failed to generate AI summary, using fallback:", error);
+      return this.generateFallbackSummary(enhancedContext);
+    }
+  }
+  formatSummary(summary, context) {
+    const { recommendations } = context;
+    let formattedSummary = summary;
+    if (recommendations.length > 0) {
+      formattedSummary += `
+
+## \uD83E\uDD16 AI Recommendations
+`;
+      recommendations.forEach((rec, index) => {
+        formattedSummary += `
+${index + 1}. ${rec}`;
+      });
+    }
+    formattedSummary += `
+
+---
+`;
+    formattedSummary += "*Generated with enhanced AI context and learning capabilities*";
+    return formattedSummary;
+  }
+  generateFallbackSummary(context) {
+    const { technicalContext, recommendations } = context;
+    const lines = technicalContext.split(`
+`);
+    const filesModified = lines.find((l) => l.includes("Files modified:"))?.split(":")[1]?.trim() || "0";
+    const filesAdded = lines.find((l) => l.includes("Files added:"))?.split(":")[1]?.trim() || "0";
+    const filesDeleted = lines.find((l) => l.includes("Files deleted:"))?.split(":")[1]?.trim() || "0";
+    const totalChanges = lines.find((l) => l.includes("Total changes:"))?.split(":")[1]?.trim() || "0";
+    let summary = `This pull request introduces changes across ${filesModified} modified files`;
+    if (filesAdded !== "0") {
+      summary += `, ${filesAdded} new files`;
+    }
+    if (filesDeleted !== "0") {
+      summary += `, and ${filesDeleted} deleted files`;
+    }
+    summary += `, with a total of ${totalChanges} code changes. The modifications appear to be part of ongoing development work to enhance the codebase functionality and structure.`;
+    if (recommendations.length > 0) {
+      summary += `
+
+## \uD83E\uDD16 AI Recommendations
+`;
+      recommendations.forEach((rec, index) => {
+        summary += `
+${index + 1}. ${rec}`;
+      });
+    }
+    summary += `
+
+---
+`;
+    summary += "*Generated with enhanced AI context and learning capabilities (fallback mode)*";
+    return summary;
+  }
+}
+
+// src/services/agents/learning.ts
+class LearningService {
+  memoryService;
+  constructor() {
+    this.memoryService = new MemoryService;
+  }
+  async recordInteraction(interaction) {
+    const record = {
+      timestamp: Date.now(),
+      prNumber: interaction.prDetails.pull_number,
+      author: interaction.prDetails.author,
+      repo: interaction.prDetails.repo,
+      summary: interaction.summary,
+      userPreferences: interaction.userPreferences,
+      codebaseContext: interaction.codebaseContext
+    };
+    await this.memoryService.recordInteraction(record);
+    await this.updateHistoricalPatterns(interaction.prDetails, interaction.codebaseContext);
+  }
+  async processFeedback(feedback) {
+    const { prNumber, feedback: feedbackText, author } = feedback;
+    const currentPreferences = await this.memoryService.getUserPreferences(author);
+    const updatedPreferences = await this.analyzeFeedbackAndUpdatePreferences(currentPreferences, feedbackText);
+    await this.memoryService.updateUserPreferences(author, updatedPreferences);
+    const learningData = {
+      prNumber,
+      feedback: feedbackText,
+      author,
+      timestamp: Date.now()
+    };
+    await this.storeFeedback(learningData);
+  }
+  async analyzeFeedbackAndUpdatePreferences(currentPreferences, feedback) {
+    const updates = {};
+    const feedbackLower = feedback.toLowerCase();
+    if (feedbackLower.includes("too detailed") || feedbackLower.includes("too long")) {
+      updates.detailLevel = "low";
+    } else if (feedbackLower.includes("not detailed enough") || feedbackLower.includes("too short")) {
+      updates.detailLevel = "high";
+    } else if (feedbackLower.includes("just right") || feedbackLower.includes("good detail")) {}
+    if (feedbackLower.includes("too technical") || feedbackLower.includes("too complex")) {
+      updates.summaryStyle = "narrative";
+    } else if (feedbackLower.includes("too casual") || feedbackLower.includes("more technical")) {
+      updates.summaryStyle = "technical";
+    } else if (feedbackLower.includes("concise") || feedbackLower.includes("brief")) {
+      updates.summaryStyle = "concise";
+    }
+    if (feedbackLower.includes("no suggestions") || feedbackLower.includes("skip recommendations")) {
+      updates.includeSuggestions = false;
+    } else if (feedbackLower.includes("need suggestions") || feedbackLower.includes("more recommendations")) {
+      updates.includeSuggestions = true;
+    }
+    if (feedbackLower.includes("focus on security")) {
+      const currentFocus = currentPreferences.focusAreas || [];
+      if (!currentFocus.includes("security")) {
+        updates.focusAreas = [...currentFocus, "security"];
+      }
+    }
+    if (feedbackLower.includes("focus on performance")) {
+      const currentFocus = currentPreferences.focusAreas || [];
+      if (!currentFocus.includes("performance")) {
+        updates.focusAreas = [...currentFocus, "performance"];
+      }
+    }
+    return updates;
+  }
+  async updateHistoricalPatterns(prDetails, codebaseContext) {
+    const currentPatterns = await this.memoryService.getHistoricalPatterns(prDetails.repo);
+    const newCommonChanges = [...currentPatterns.commonChanges];
+    codebaseContext.patterns.forEach((pattern) => {
+      if (!newCommonChanges.includes(pattern)) {
+        newCommonChanges.push(pattern);
+      }
+    });
+    const patternCounts = new Map;
+    newCommonChanges.forEach((pattern) => {
+      patternCounts.set(pattern, (patternCounts.get(pattern) || 0) + 1);
+    });
+    const successfulPatterns = Array.from(patternCounts.entries()).filter(([_, count]) => count >= 3).map(([pattern, _]) => pattern);
+    const updatedPatterns = {
+      commonChanges: newCommonChanges.slice(-20),
+      successfulPatterns
+    };
+    await this.memoryService.updateHistoricalPatterns(prDetails.repo, updatedPatterns);
+  }
+  async storeFeedback(learningData) {
+    console.log("Learning from feedback:", {
+      prNumber: learningData.prNumber,
+      author: learningData.author,
+      feedback: learningData.feedback.substring(0, 100) + "...",
+      timestamp: new Date(learningData.timestamp).toISOString()
+    });
+  }
+  async getLearningSummary(repo) {
+    const history = await this.memoryService.getInteractionHistory(repo);
+    const patterns = await this.memoryService.getHistoricalPatterns(repo);
+    const uniqueUsers = new Set(history.map((record) => record.author)).size;
+    const recentFeedback = history.filter((record) => record.feedback).slice(-5).map((record) => record.feedback).filter(Boolean);
+    return {
+      totalInteractions: history.length,
+      uniqueUsers,
+      commonPatterns: patterns.commonChanges.slice(0, 5),
+      recentFeedback
+    };
+  }
+}
+
+// src/services/agents/index.ts
+class AgenticSummaryService {
+  aiService;
+  memoryService;
+  codebaseAnalyzer;
+  contextBuilder;
+  summaryGenerator;
+  learningService;
+  constructor(aiService) {
+    this.aiService = aiService;
+    this.memoryService = new MemoryService;
+    this.codebaseAnalyzer = new CodebaseAnalyzer(aiService);
+    this.contextBuilder = new ContextBuilder(aiService);
+    this.summaryGenerator = new SummaryGenerator(aiService);
+    this.learningService = new LearningService;
+  }
+  async generateAgenticSummary({
+    parsedDiff,
+    prDetails
+  }) {
+    try {
+      const userPreferences = await this.memoryService.getUserPreferences(prDetails.author);
+      const historicalPatterns = await this.memoryService.getHistoricalPatterns(prDetails.repo);
+      const codebaseContext = await this.codebaseAnalyzer.analyze({
+        parsedDiff,
+        prDetails
+      });
+      const agentContext = {
+        prDetails,
+        parsedDiff,
+        codebaseContext,
+        userPreferences,
+        historicalPatterns
+      };
+      const enhancedContext = await this.contextBuilder.buildContext(agentContext);
+      const summary = await this.summaryGenerator.generateSummary(enhancedContext);
+      await this.learningService.recordInteraction({
+        prDetails,
+        summary,
+        userPreferences,
+        codebaseContext
+      });
+      await this.memoryService.updateCodebaseContext(prDetails.repo, codebaseContext);
+      return summary;
+    } catch (error) {
+      console.error("Error in agentic summary generation:", error);
+      return this.generateFallbackSummary(parsedDiff, prDetails);
+    }
+  }
+  async learnFromFeedback({
+    prNumber,
+    feedback,
+    author
+  }) {
+    try {
+      await this.learningService.processFeedback({
+        prNumber,
+        feedback,
+        author
+      });
+    } catch (error) {
+      console.error("Error processing feedback:", error);
+    }
+  }
+  async getAgentStatus(repo) {
+    try {
+      const history = await this.memoryService.getInteractionHistory(repo);
+      const codebaseContext = await this.memoryService.getCodebaseContext(repo);
+      const learningSummary = await this.learningService.getLearningSummary(repo);
+      const uniqueUsers = new Set(history.map((record) => record.author)).size;
+      return {
+        memoryStatus: {
+          userCount: uniqueUsers,
+          interactionCount: history.length,
+          hasCodebaseContext: codebaseContext !== null
+        },
+        learningStatus: learningSummary
+      };
+    } catch (error) {
+      console.error("Error getting agent status:", error);
+      return {
+        memoryStatus: {
+          userCount: 0,
+          interactionCount: 0,
+          hasCodebaseContext: false
+        },
+        learningStatus: {
+          totalInteractions: 0,
+          uniqueUsers: 0,
+          commonPatterns: [],
+          recentFeedback: []
+        }
+      };
+    }
+  }
+  generateFallbackSummary(parsedDiff, prDetails) {
+    const changedFiles = parsedDiff.filter((f) => f.to && f.to !== "/dev/null");
+    const newFiles = parsedDiff.filter((f) => f.from === "/dev/null");
+    const deletedFiles = parsedDiff.filter((f) => f.to === "/dev/null");
+    const totalChanges = parsedDiff.reduce((sum, f) => sum + (f.chunks?.length ?? 0), 0);
+    let summary = `This pull request "${prDetails.title}" introduces changes across ${changedFiles.length} modified files`;
+    if (newFiles.length > 0) {
+      summary += `, ${newFiles.length} new files`;
+    }
+    if (deletedFiles.length > 0) {
+      summary += `, and ${deletedFiles.length} deleted files`;
+    }
+    summary += `, with a total of ${totalChanges} code changes.`;
+    if (prDetails.description) {
+      summary += ` The PR description indicates: "${prDetails.description.substring(0, 200)}${prDetails.description.length > 200 ? "..." : ""}"`;
+    }
+    summary += `
+
+---
+`;
+    summary += "*Generated with enhanced AI context and learning capabilities (fallback mode)*";
+    return summary;
+  }
+}
+
 // src/services/summary.ts
 class SummaryService {
+  static agenticService = null;
+  static getAgenticService(aiService) {
+    if (!this.agenticService) {
+      this.agenticService = new AgenticSummaryService(aiService);
+    }
+    return this.agenticService;
+  }
   static async summarize({
     aiService,
     parsedDiff,
     prDetails
   }) {
-    const changedFiles = parsedDiff.filter((file) => file.to && file.to !== "/dev/null");
-    const filesChanged = changedFiles.map((file) => file.to).join(", ");
-    const commitMessages = prDetails.commits.map((c) => `- ${c.message}`).join(`
-`);
-    let diffSummary = "";
-    for (const file of parsedDiff) {
-      const fileName = file.to ?? file.from ?? "unknown file";
-      const changes = file.chunks?.length ?? 0;
-      diffSummary += `${fileName}: ${changes} change(s) detected.
-`;
-    }
-    const summary = await aiService.getAiSummary({
-      filesChanged,
-      prTitle: prDetails.title,
-      prDescription: prDetails.description,
-      commitMessages,
-      diffSummary
+    const agenticService = this.getAgenticService(aiService);
+    const summary = await agenticService.generateAgenticSummary({
+      parsedDiff,
+      prDetails
     });
     if (!summary)
       return null;
-    const formattedSummary = `${summary.split(`
-`).map((line) => line.trim()).filter((line) => line).join(`
+    return this.formatSummaryWithFileChanges(summary, parsedDiff);
+  }
+  static formatSummaryWithFileChanges(summary, parsedDiff) {
+    const fileChangesSection = parsedDiff.map((file) => file.to).length > 3 ? `
 
-`)}
-  
-  ${parsedDiff.map((file) => file.to).length > 3 ? `#### Files Changed
-  ${parsedDiff.map((file) => {
+#### Files Changed
+${parsedDiff.map((file) => {
       if (file.to === "/dev/null") {
         return `- \`${file.from}\` \uD83D\uDDD1️ (deleted)`;
       }
@@ -30725,9 +31316,28 @@ class SummaryService {
       }
       return null;
     }).filter(Boolean).join(`
-`).replace(/^.*\/dev\/null.*$/gm, "")}` : ""}
-  `;
-    return formattedSummary;
+`).replace(/^.*\/dev\/null.*$/gm, "")}` : "";
+    return summary + fileChangesSection;
+  }
+  static async learnFromFeedback({
+    prNumber,
+    feedback,
+    author,
+    aiService
+  }) {
+    const agenticService = this.getAgenticService(aiService);
+    await agenticService.learnFromFeedback({
+      prNumber,
+      feedback,
+      author
+    });
+  }
+  static async getAgentStatus({
+    repo,
+    aiService
+  }) {
+    const agenticService = this.getAgenticService(aiService);
+    return await agenticService.getAgentStatus(repo);
   }
 }
 
@@ -36329,6 +36939,126 @@ class AiService {
     });
     return response.choices[0].message?.content?.trim() ?? null;
   }
+  async analyzeArchitecture(input) {
+    const response = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert software architect. Analyze the provided file types, patterns, and commit messages to identify architectural patterns and coding conventions. Be concise and specific."
+        },
+        {
+          role: "user",
+          content: `Analyze this codebase:
+File types: ${input.fileTypes.join(", ")}
+Patterns: ${input.patterns.join(", ")}
+Commit messages: ${input.commitMessages.join(`
+`)}
+
+Provide a JSON response with:
+{
+  "architecture": "brief architectural description",
+  "conventions": ["convention1", "convention2", "convention3"]
+}`
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 1024
+    });
+    const content = response.choices[0].message?.content?.trim() ?? "";
+    try {
+      const parsed = JSON.parse(content);
+      return {
+        architecture: parsed.architecture || "Unknown architecture",
+        conventions: parsed.conventions || []
+      };
+    } catch (error) {
+      const lines = content.split(`
+`).filter((line) => line.trim());
+      return {
+        architecture: lines[0] || "Unknown architecture",
+        conventions: lines.slice(1).map((line) => line.replace(/^[-*]\s*/, "")).filter(Boolean)
+      };
+    }
+  }
+  async generateRecommendations(input) {
+    const response = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert code reviewer. Generate 2-3 actionable recommendations based on the code changes and context provided. Focus on practical improvements."
+        },
+        {
+          role: "user",
+          content: `Based on these changes and context, provide recommendations:
+Changes: ${input.parsedDiff.length} files modified
+Tech stack: ${input.codebaseContext.techStack.join(", ")}
+Complexity: ${input.codebaseContext.complexity}
+Patterns: ${input.codebaseContext.patterns.join(", ")}
+User preferences: ${input.userPreferences.summaryStyle} style, ${input.userPreferences.detailLevel} detail
+
+Provide a JSON array of recommendations: ["recommendation1", "recommendation2", "recommendation3"]`
+        }
+      ],
+      temperature: 0.4,
+      max_tokens: 1024
+    });
+    const content = response.choices[0].message?.content?.trim() ?? "";
+    try {
+      const parsed = JSON.parse(content);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return content.split(`
+`).filter((line) => line.trim()).map((line) => line.replace(/^[-*]\s*/, "")).filter(Boolean).slice(0, 3);
+    }
+  }
+  async generateAgenticSummary(context) {
+    const {
+      technicalContext,
+      userContext,
+      historicalContext,
+      architecturalContext
+    } = context;
+    const system = `You are an intelligent code review agent with deep contextual understanding and learning capabilities. You have access to:
+
+1. **Technical Context**: Detailed analysis of the changes
+2. **User Context**: Individual preferences and style requirements  
+3. **Historical Context**: Patterns from previous reviews and team preferences
+4. **Architectural Context**: Understanding of the codebase structure and conventions
+
+Your role is to generate comprehensive, contextual summaries that:
+- Match the user's preferred style and detail level
+- Consider historical patterns and team preferences
+- Provide insights based on architectural understanding
+- Focus on the "why" and "how" of the changes, not just the "what"
+
+Write in a confident, technical tone that demonstrates deep understanding of the codebase and the specific changes being made.
+
+Format your response as a single, coherent technical narrative that flows naturally from introduction to conclusion.`;
+    const user = `Generate a comprehensive code review summary using the following context:
+
+${technicalContext}
+
+${userContext}
+
+${historicalContext}
+
+${architecturalContext}
+
+Write a detailed technical narrative that explains the changes, their impact, and any relevant architectural considerations.`;
+    const response = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      temperature: 0.4,
+      max_tokens: 4096,
+      seed: 69
+    });
+    return response.choices[0].message?.content?.trim() ?? null;
+  }
   getPrompt(input) {
     return createRichSummaryPrompt({
       prTitle: input.prTitle,
@@ -36341,10 +37071,11 @@ class AiService {
 
 // src/index.ts
 async function main() {
-  core2.info("Starting code summarization process...");
+  core2.info("Starting agentic code summarization process...");
   const GITHUB_TOKEN = core2.getInput("GITHUB_TOKEN");
   const OPENAI_API_KEY = core2.getInput("OPENAI_API_KEY");
-  const OPENAI_API_MODEL = core2.getInput("OPENAI_API_MODEL");
+  const OPENAI_API_MODEL = core2.getInput("OPENAI_API_MODEL") || "gpt-4o";
+  const ENABLE_AGENTIC_MODE = core2.getInput("ENABLE_AGENTIC_MODE") === "true";
   try {
     const githubService = new GitHubService({
       GITHUB_TOKEN
@@ -36352,7 +37083,7 @@ async function main() {
     const prDetails = await githubService.getPRDetails();
     core2.info(`Analyzing PR #${prDetails.pull_number}: ${prDetails.title}`);
     let diff;
-    const eventData = JSON.parse(readFileSync2(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
+    const eventData = JSON.parse(readFileSync3(process.env.GITHUB_EVENT_PATH ?? "", "utf8"));
     if (eventData.action === "opened" || eventData.action === "synchronize") {
       diff = await githubService.getDiff(prDetails.owner, prDetails.repo, prDetails.pull_number);
     } else {
@@ -36364,16 +37095,17 @@ async function main() {
       return;
     }
     const parsedDiff = import_parse_diff.default(diff);
-    const excludePatterns = core2.getInput("exclude").split(",").map((s2) => s2.trim());
+    const excludePatterns = core2.getInput("exclude").split(",").map((s2) => s2.trim()).filter(Boolean);
     const filteredDiff = parsedDiff.filter((file) => {
       const filePath = file.to ?? "";
       return !excludePatterns.some((pattern) => minimatch(filePath, pattern));
     });
+    const aiService = new AiService({
+      apiKey: OPENAI_API_KEY,
+      model: OPENAI_API_MODEL
+    });
     const summary = await SummaryService.summarize({
-      aiService: new AiService({
-        apiKey: OPENAI_API_KEY,
-        model: OPENAI_API_MODEL
-      }),
+      aiService,
       parsedDiff: filteredDiff,
       prDetails
     });
@@ -36381,6 +37113,22 @@ async function main() {
       const ownerType = core2.getInput("owner") ?? "bot";
       const useAuthorIdentity = ownerType === "author";
       await githubService.createComment(prDetails.owner, prDetails.repo, prDetails.pull_number, summary, useAuthorIdentity, useAuthorIdentity ? prDetails.author : undefined);
+      if (ENABLE_AGENTIC_MODE) {
+        core2.info("Agentic mode enabled - enhanced learning capabilities active");
+        try {
+          const agentStatus = await SummaryService.getAgentStatus({
+            repo: prDetails.repo,
+            aiService
+          });
+          core2.info(`Agent Status:
+- Users tracked: ${agentStatus.memoryStatus.userCount}
+- Total interactions: ${agentStatus.memoryStatus.interactionCount}
+- Has codebase context: ${agentStatus.memoryStatus.hasCodebaseContext}
+- Common patterns: ${agentStatus.learningStatus.commonPatterns.join(", ")}`);
+        } catch (error) {
+          core2.warning(`Failed to get agent status: ${error}`);
+        }
+      }
     }
   } catch (error) {
     core2.setFailed(`Action failed: ${error instanceof Error ? error.message : String(error)}`);
