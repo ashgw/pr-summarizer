@@ -37075,7 +37075,7 @@ async function main() {
   const GITHUB_TOKEN = core2.getInput("GITHUB_TOKEN");
   const OPENAI_API_KEY = core2.getInput("OPENAI_API_KEY");
   const OPENAI_API_MODEL = core2.getInput("OPENAI_API_MODEL") || "gpt-4o";
-  const ENABLE_AGENTIC_MODE = core2.getInput("ENABLE_AGENTIC_MODE") === "true";
+  const ENABLE_AGENTIC_MODE = true;
   try {
     const githubService = new GitHubService({
       GITHUB_TOKEN

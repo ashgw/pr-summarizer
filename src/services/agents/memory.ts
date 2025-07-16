@@ -73,7 +73,7 @@ export class MemoryService {
 
   async updateUserPreferences(
     author: string,
-    preferences: Partial<UserPreferences>,
+    preferences: Partial<UserPreferences>
   ): Promise<void> {
     this.memory.userPreferences[author] = {
       ...(await this.getUserPreferences(author)),
@@ -98,7 +98,7 @@ export class MemoryService {
 
   async updateHistoricalPatterns(
     repo: string,
-    patterns: Partial<HistoricalPatterns>,
+    patterns: Partial<HistoricalPatterns>
   ): Promise<void> {
     this.memory.historicalPatterns[repo] = {
       ...(await this.getHistoricalPatterns(repo)),
@@ -125,7 +125,7 @@ export class MemoryService {
 
   async updateCodebaseContext(
     repo: string,
-    context: CodebaseContext,
+    context: CodebaseContext
   ): Promise<void> {
     this.memory.codebaseContexts[repo] = context;
     this.saveMemory();
@@ -133,7 +133,7 @@ export class MemoryService {
 
   async getInteractionHistory(
     repo?: string,
-    author?: string,
+    author?: string
   ): Promise<InteractionRecord[]> {
     let history = this.memory.interactionHistory;
 

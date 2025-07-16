@@ -14,7 +14,7 @@ async function main() {
   const GITHUB_TOKEN = core.getInput("GITHUB_TOKEN");
   const OPENAI_API_KEY = core.getInput("OPENAI_API_KEY");
   const OPENAI_API_MODEL = core.getInput("OPENAI_API_MODEL") || "gpt-4o";
-  const ENABLE_AGENTIC_MODE = core.getInput("ENABLE_AGENTIC_MODE") === "true";
+  const ENABLE_AGENTIC_MODE = true; // change after testing
 
   try {
     const githubService = new GitHubService({
@@ -26,14 +26,14 @@ async function main() {
 
     let diff: Optional<string>;
     const eventData = JSON.parse(
-      readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8"),
+      readFileSync(process.env.GITHUB_EVENT_PATH ?? "", "utf8")
     );
 
     if (eventData.action === "opened" || eventData.action === "synchronize") {
       diff = await githubService.getDiff(
         prDetails.owner,
         prDetails.repo,
-        prDetails.pull_number,
+        prDetails.pull_number
       );
     } else {
       core.info("Unsupported event: " + process.env.GITHUB_EVENT_NAME);
@@ -79,13 +79,13 @@ async function main() {
         prDetails.pull_number,
         summary,
         useAuthorIdentity,
-        useAuthorIdentity ? prDetails.author : undefined,
+        useAuthorIdentity ? prDetails.author : undefined
       );
 
       // If agentic mode is enabled, log additional information
       if (ENABLE_AGENTIC_MODE) {
         core.info(
-          "Agentic mode enabled - enhanced learning capabilities active",
+          "Agentic mode enabled - enhanced learning capabilities active"
         );
 
         try {
@@ -106,7 +106,7 @@ async function main() {
     }
   } catch (error) {
     core.setFailed(
-      `Action failed: ${error instanceof Error ? error.message : String(error)}`,
+      `Action failed: ${error instanceof Error ? error.message : String(error)}`
     );
     throw error;
   }
@@ -114,7 +114,7 @@ async function main() {
 
 main().catch((error) => {
   core.setFailed(
-    `Unhandled error: ${error instanceof Error ? error.message : String(error)}`,
+    `Unhandled error: ${error instanceof Error ? error.message : String(error)}`
   );
   process.exit(1);
 });
